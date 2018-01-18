@@ -1,120 +1,77 @@
 /* SPDX-License-Identifier: GPL-2.0
  *
- * Copyright (C) 2016-2017 René van Dorst <opensource@vdorst.com>. All Rights Reserved.
+ * Copyright (C) 2016-2018 René van Dorst <opensource@vdorst.com>. All Rights Reserved.
  */
-
 
 #include <linux/linkage.h>
 
-
-#define POLY1305_CTX_H 0
-#define POLY1305_CTX_R POLY1305_CTX_H + (5*4)
-
+#define POLY1305_BLOCK_SIZE 16
 .text
-#define H0  $t0
-#define H1  $t1
-#define H2  $t2
-#define H3  $t3
-#define H4  $t4
+#define H0 $t0
+#define H1 $t1
+#define H2 $t2
+#define H3 $t3
+#define H4 $t4
 
-#define R0  $t5
-#define R1  $t6
-#define R2  $t7
-#define R3  $t8
-
-#define I0  $t0
-#define I1  $t1
-#define I2  $t2
-#define I3  $t3
+#define R0 $t5
+#define R1 $t6
+#define R2 $t7
+#define R3 $t8
 
 #define O0 $s0
 #define O1 $s4
-#define O2 $s5
-#define O3 $s6
-#define O4 $s7
+#define O2 $v1
+#define O3 $t9
+#define O4 $s5
 
 #define S1 $s1
 #define S2 $s2
-#define S4 $s3
+#define S3 $s3
 
-#define SC  $gp
-#define CA  $v1
-#define AT  $v1
+#define SC $at
+#define CA $v0
 
-
-
-
-
-#define R(n)  R ## n
-#define S(n)  H ## n
-#define H(n)  H ## n
-#define O(n)  O ## n
-#define I(n)  I ## n
-
-#define __in_ctx_poly $a0
+#define poly       $a0
 #define src        $a1
 #define srclen     $a2
 #define hibit      $a3
 
-#define PTR_POLY1305_R(n) (POLY1305_CTX_R + (n*4)) ## ($a0)
-#define PTR_POLY1305_H(n) (POLY1305_CTX_H + (n*4)) ## ($a0)
-
-#define LOAD_ctx_r(n)        lw R(n), PTR_POLY1305_R(n);
-#define LOAD_ctx_h(n)        lw H(n), PTR_POLY1305_H(n);
-#define STORE_ctx_h(n)       sw H(n), PTR_POLY1305_H(n);
+#define PTR_POLY1305_R(n) ( 0 + (n*4)) ## ($a0)
+#define PTR_POLY1305_S(n) (16 + (n*4)) ## ($a0)
+#define PTR_POLY1305_CA   (32        ) ## ($a0)
+#define PTR_POLY1305_H(n) (36 + (n*4)) ## ($a0)
 
 #define POLY1305_BLOCK_SIZE 16
-
-#define GET_HILO_REG(RHI, RLO) \
-	mflo RLO; \
-	mfhi RHI;
-#define AND_3FFFFFF(RT, RS) \
-	ext RT, RS, 0, 26;
-#define poly1305_frame_size 15 * 4
-
-// MULTI_MUL_AND_ADD_PREV( R(2), R(1), R(0), S(4), S(3), H(1))
-#define MULTI_MUL_AND_ADD_PREV( MUL1, MUL2, MUL3, MUL4, MUL5, PREV ) \
-	mflo PREV; \
-	mfhi SC;   \
-	multu O(0), MUL1; \
-	maddu O(1), MUL2; \
-		addu AT,PREV,CA; \
-	maddu O(2), MUL3; \
-	maddu O(3), MUL4; \
-		sltu PREV,AT,PREV; \
-		srl  CA,AT,26; \
-	maddu O(4), MUL5; \
-		addu SC,PREV,SC; \
-		AND_3FFFFFF( PREV, AT ); \
-		ins CA,SC, 32-26, 26
-
-#define ADD_CIO( A, B, C_I, C_O, OUT, SC ) \
-	addu 	SC, A, C_I; \
-	addu	OUT, A, B;  \
-	
-	
-	
+#define POLY1305_STACK_SIZE 8 * 4
 
 // static unsigned int poly1305_blocks_mips   (struct poly1305_ctx *ctx, const u8 *src, unsigned int srclen, u32 hibit)
 // static void         poly1305_blocks_generic(void *ctx, const u8 *inp, size_t len, u32 padbit)
-// .abicalls
-// .text
-.set noat
 .set reorder
-// .set nomips16
-// .set nomicromips
+.set noat
 .globl poly1305_blocks_mips
 .ent poly1305_blocks_mips
 poly1305_blocks_mips:
-	.frame  $sp,poly1305_frame_size,$31
-	// store the used save registers.
-	addiu 	$sp, -poly1305_frame_size
-	addiu srclen, -POLY1305_BLOCK_SIZE
+	.frame  $sp,POLY1305_STACK_SIZE,$31
+	// srclen &= 0xFFFFFFFF - (POLY1305_BLOCK_SIZE - 1) = 0xFFFFFFF0
+	ins	srclen, $zero, 0, 3
 
-	LOAD_ctx_r(0)
-	LOAD_ctx_r(1)
-	LOAD_ctx_r(2)
-	LOAD_ctx_r(3)
+	.set noreorder
+	// check srclen >= 16 bytes
+	bnez	srclen, .Lpoly1305_blocks_mips_start
+	// calculate end address. endaddress (srclen) = src + (srclen & 0xFFFFFFF0)
+	addu	srclen, src
+	.set reorder
+
+	jr $ra
+	nop
+
+.align 4
+.Lpoly1305_blocks_mips_start:
+	addiu	$sp, -POLY1305_STACK_SIZE
+	lw R0, PTR_POLY1305_R(0)
+	lw R1, PTR_POLY1305_R(1)
+	lw R2, PTR_POLY1305_R(2)
+	lw R3, PTR_POLY1305_R(3)
 
 	// store the used save registers.
 	sw  $s0, 0($sp)
@@ -123,139 +80,132 @@ poly1305_blocks_mips:
 	sw  $s3, 12($sp)
 	sw  $s4, 16($sp)
 	sw  $s5, 20($sp)
-	sw  $s6, 24($sp)
-	sw  $s7, 28($sp)
-	sw  $gp, 32($sp)
-	
-	srl S(3), R(3),2
-	srl S(2), R(2),2
-	srl S(1), R(1),2
-	addu S(3), R(3)
-	addu S(2), R(2)
-	addu S(1), R(1)
 
-	LOAD_ctx_h(0)
-	LOAD_ctx_h(1)
-	LOAD_ctx_h(2)
-	LOAD_ctx_h(3)
-	LOAD_ctx_h(4)
+	lw S1, PTR_POLY1305_S(1)
+	lw S2, PTR_POLY1305_S(2)
+	lw S3, PTR_POLY1305_S(3)
 
-poly1305_loop:
+	// load Hx and Carry
+	lw CA, PTR_POLY1305_CA
+	lw H0, PTR_POLY1305_H(0)
+	lw H1, PTR_POLY1305_H(1)
+	lw H2, PTR_POLY1305_H(2)
+	lw H3, PTR_POLY1305_H(3)
+	lw H4, PTR_POLY1305_H(4)
 
-	/* h += m[i] */
-	lw I(0), 0(src)
-	lw I(1), 4(src)
-	lw I(2), 8(src)
-	lw I(3),12(src)
+	addiu SC, $zero, 1
+
+.Lpoly1305_loop:
+	lw O0, 0(src)
+	lw O1, 4(src)
+	lw O2, 8(src)
+	lw O3,12(src)
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-	wsbh 	I(0)
-	wsbh 	I(1)
-	wsbh 	I(2)
-	wsbh 	I(3)
-	rotr 	I(0), 16
-	rotr 	I(1), 16
-	rotr 	I(2), 16
-	rotr 	I(3), 16
+	wsbh O0
+	wsbh O1
+	wsbh O2
+	wsbh O3
+	rotr O0, 16
+	rotr O1, 16
+	rotr O2, 16
+	rotr O3, 16
 #endif
 
+	// h0 = (u32)(d0 = (u64)h0 + le32_to_cpuvp(inp + 0) + c 'Carry_previous cycle');
+	addu H0, CA
+	sltu CA, H0, CA
+	addu O0, H0
+	sltu H0, O0, H0
+	addu CA, H0
 
-	addiu src, POLY1305_BLOCK_SIZE
-	addiu srclen, -POLY1305_BLOCK_SIZE
-	
-	// h0 = (u32)(d0 = (u64)h0 + le32_to_cpuvp(inp + 0));
-	
-	// Add H0 + I0
-	addu O(0), H(0), I(0)
-	sltu CA, O(0), H(0)
-	
 	// h1 = (u32)(d1 = (u64)h1 + (d0 >> 32) + le32_to_cpuvp(inp + 4));
-	
-	addu O(1), H(1)
-	addu O(1), CA
+	addu H1, CA
+	sltu CA, H1, CA
+	addu O1, H1
+	sltu H1, O1, H1
+	addu CA, H1
 
 	// h2 = (u32)(d2 = (u64)h2 + (d1 >> 32) + le32_to_cpuvp(inp + 8));
+	addu H2, CA
+	sltu CA, H2, CA
+	addu O2, H2
+	sltu H2, O2, H2
+	addu CA, H2
 
-	sltu O(2), O(1), H(1)
-	addu O(2), H(1)
-	addu O(2), SC
-		
 	// h3 = (u32)(d3 = (u64)h3 + (d2 >> 32) + le32_to_cpuvp(inp + 12));
-
-	sltu O(3), O(2), H(2)
-	addu O(3), H(2)
-	addu O(3), SC
+	addu H3, CA
+	sltu CA, H3, CA
+	addu O3, H3
+	sltu H3, O3, H3
+	addu CA, H3
 
 	// h4 += (u32)(d3 >> 32) + padbit;
-	
-	sltu O(4), O(3), O(4)
-	addu O(4), H(4)
-	addu O(4), hibit
-
+	addu H4, hibit
+	addu O4, H4, CA
 
 	// D0
-	multu O(0), R(0)
-	maddu O(1), S(3)
-	maddu O(2), S(2)
-	maddu O(3), S(1)
 
-	GET_HILO_REG (H(1), H(0))
+	multu O0, R0
+	maddu O1, S3
+	maddu O2, S2
+	maddu O3, S1
+	mfhi	CA
+	mflo	H0
 
 	// D1
-	multu O(4), S(1)
-	mthi  $zero
-	maddu O(0), R(1)
-	maddu O(1), R(0)
-	maddu O(2), S(3)
-	maddu O(3), S(2)
 
-	GET_HILO_REG (H(4), H(0))
-	
+	multu O0, R1
+	maddu O1, R0
+	maddu O2, S3
+	maddu O3, S2
+	maddu O4, S1
+	maddu CA, SC
+	mfhi	CA
+	mflo	H1
+
 	// D2
-	
-	multu O(0), R(1)
-	maddu O(1), R(0)
-	maddu O(2), S(3)
-	maddu O(3), S(2)
 
-	GET_HILO_REG (H(2), H(0))
+	multu O0, R2
+	maddu O1, R1
+	maddu O2, R0
+	maddu O3, S3
+	maddu O4, S2
+	maddu CA, SC
+	mfhi	CA
+	mflo	H2
 
-	ins CA,SC, 32-26, 26
+	// D4
 
-	MULTI_MUL_AND_ADD_PREV( R(2), R(1), R(0), S(4), S(3), H(1))
+	mul	H4, O4, R0
 
-	MULTI_MUL_AND_ADD_PREV( R(3), R(2), R(1), R(0), S(4), H(2))
+	// D3
 
-	MULTI_MUL_AND_ADD_PREV( R(1), R(3), R(2), R(1), R(0), H(3))
+	multu O0, R3
+	maddu O1, R2
+	maddu O2, R1
+	maddu O3, R0
+	maddu O4, S3
+	maddu CA, SC
+	mfhi	CA
+	mflo	H3
 
-	GET_HILO_REG (SC, H(4))
+	addiu src,     POLY1305_BLOCK_SIZE
 
-
-poly1305_loop_finish:
-	addu AT,H(4),CA
-
-	sltu 	H(4),AT,H(4)
-	srl 	CA,AT, 26
-	addu 	SC,H(4),SC
-	AND_3FFFFFF( H(4), AT )
-	ins		CA,SC, 32-26, 26
-
-	// Multiply 5
-	// H(0) = H(0) + (CA * 5) = H(0) + CA + (CA << 2)
-	sll   SC, CA, 2
-	addu  H(0), H(0), CA
-	addu  H(0), SC
-
-	// H(1) = H(1) + (H(0) >> 26)
-	srl   SC, H(0), 26
-	addu H(1), SC
-
-	// H(0) = H(0) & 0x3FFFFFF
-	AND_3FFFFFF( H(0), H(0) )
+	// h4 += (u32)(d3 >> 32);
+	addu	O4, H4, CA
+	// h4 &= 3
+	andi	H4, O4, 3
+	// c = (h4 >> 2) + (h4 & ~3U);
+	srl	CA, O4, 2
+	ins	O4, $zero, 0, 2
 
 	// able to do a 16 byte block.
-	bgezl srclen, poly1305_loop
-	nop
+	.set noreorder
+	bne	src, srclen, .Lpoly1305_loop
+	// Delay slot is always executed.
+	addu	CA, O4
+	.set reorder
 
 	// restore the used save registers.
 	lw  $s0, 0($sp)
@@ -264,92 +214,202 @@ poly1305_loop_finish:
 	lw  $s3, 12($sp)
 	lw  $s4, 16($sp)
 	lw  $s5, 20($sp)
-	lw  $s6, 24($sp)
-	lw  $s7, 28($sp)
-	lw  $gp, 32($sp)
 
-	STORE_ctx_h(0)
-	STORE_ctx_h(1)
-	STORE_ctx_h(2)
-	STORE_ctx_h(3)
-	STORE_ctx_h(4)
+	// store Hx and Carry
+	sw CA, PTR_POLY1305_CA
+	sw H0, PTR_POLY1305_H(0)
+	sw H1, PTR_POLY1305_H(1)
+	sw H2, PTR_POLY1305_H(2)
+	sw H3, PTR_POLY1305_H(3)
+	sw H4, PTR_POLY1305_H(4)
 
-	addiu 	$sp, poly1305_frame_size
-	// return remaining bytes
-	addiu	$v0, srclen, POLY1305_BLOCK_SIZE
+.Lpoly1305_blocks_mips_end:
 	// Jump Back
+	.set noreorder
 	jr	$ra
-	nop
-
+	addiu	$sp, POLY1305_STACK_SIZE
+	.set reorder
 .end poly1305_blocks_mips
 .set at
 .set reorder
 
+#define MAC $a1
+#define NONCE $a2
 
+#define G0 $t5
+#define G1 $t6
+#define G2 $t7
+#define G3 $t8
+#define G4 $t9
 
-#define PR0 $t4
-#define PR1 $t5
-#define PR2 $t6
-#define PR3 $t7
+#undef O4
+#define O4 $v1
 
-#define PT0 $t0
+.set reorder
+.set noat
+.align 4
+.globl poly1305_emit_mips
+.ent poly1305_emit_mips
+poly1305_emit_mips:
+	// load Hx and Carry
+	lw CA, PTR_POLY1305_CA
+	lw H0, PTR_POLY1305_H(0)
+	lw H1, PTR_POLY1305_H(1)
+	lw H2, PTR_POLY1305_H(2)
+	lw H3, PTR_POLY1305_H(3)
+	lw H4, PTR_POLY1305_H(4)
 
-#define PR(n)  PR ## n
-#define PT(n)  PT ## n
+	/* Add left over carry */
+	addu	H0, CA
+	sltu	CA, H0, CA
+	addu	H1, CA
+	sltu	CA, H1, CA
+	addu	H2, CA
+	sltu	CA, H2, CA
+	addu	H3, CA
+	sltu	CA, H3, CA
+	addu	H4, CA
 
-#define STORE_zero_poly_h(n) 	sw $zero, PTR_POLY1305_H(n);
-#define STORE_poly_r(n)		sw PR(n), PTR_POLY1305_R(n);
-#define LOAD_key(RG,n)		lw RG, (n * 4) ## ($a1);
+	/* compare to modulus by computing h + -p */
+	addiu	G0, H0, 5
+	sltu	CA, H0, CA
+	addu	G1, H1, CA
+	sltu	CA, H1, CA
+	addu	G2, H2, CA
+	sltu	CA, H2, CA
+	addu	G3, H3, CA
+	sltu	CA, H3, CA
+	addu	G4, H4, CA
 
+	srl	SC, G4, 2
 
-// static void poly1305_init(struct poly1305_ctx *ctx, const u8 key[static POLY1305_KEY_SIZE])
+	/* if there was carry into 131st bit, h3:h0 = g3:g0 */
+	movn	H0, G0, SC
+	movn	H1, G1, SC
+	movn	H2, G2, SC
+	movn	H3, G3, SC
+
+	lw	CA, 0(NONCE)
+	lw	G1, 4(NONCE)
+	lw	G2, 8(NONCE)
+	lw	G3,12(NONCE)
+
+	/* mac = (h + nonce) % (2^128) */
+	addu	H0, CA
+	sltu	CA, H0, CA
+
+	//H1
+	addu H1, CA
+	sltu CA, H1, CA
+	addu H1, G1
+	sltu G1, H1, G1
+	addu CA, G1
+
+	//H2
+	addu H2, CA
+	sltu CA, H2, CA
+	addu H2, G2
+	sltu G2, H2, G2
+	addu CA, G2
+
+	//H3
+	addu H3, CA
+	sltu CA, H3, CA
+	addu H3, G3
+	sltu G3, H1, G3
+	addu CA, G3
+
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	wsbh H0
+	wsbh H1
+	wsbh H2
+	wsbh H3
+	rotr H0, 16
+	rotr H1, 16
+	rotr H2, 16
+	rotr H3, 16
+#endif
+
+	// store MAC
+	sw H0, 0(MAC)
+	sw H1, 4(MAC)
+	sw H2, 8(MAC)
+
+	.set noreorder
+	jr	$ra
+	sw H3,12(MAC)
+	.set reorder
+.end poly1305_emit_mips
+
+#define PR0 $t0
+#define PR1 $t1
+#define PR2 $t2
+#define PR3 $t3
+#define PT0 $t4
+#define PS1 $t5
+#define PS2 $t6
+#define PS3 $t7
+
 // asmlinkage void poly1305_init_mips(void *ctx, const u8 key[16]);
-.set noreorder
+.align 4
 .globl poly1305_init_mips
 .ent poly1305_init_mips
 poly1305_init_mips:
-
-	lui 	PT(0), 0x0FFF
-	
-	LOAD_key(PR(0), 0)
-	LOAD_key(PR(1), 1)
-	LOAD_key(PR(2), 2)
-	LOAD_key(PR(3), 3)
-
-	ori	PT(0), 0xFFFC
+	lw PR0, 0($a1)
+	lw PR1, 4($a1)
+	lw PR2, 8($a1)
+	lw PR3,12($a1)
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-	wsbh 	PR(0)
-	wsbh 	PR(1)
-	wsbh 	PR(2)
-	wsbh 	PR(3)
-	rotr 	PR(0), 16
-	rotr 	PR(1), 16
-	rotr 	PR(2), 16
-	rotr 	PR(3), 16
+	wsbh PR0
+	wsbh PR1
+	wsbh PR2
+	wsbh PR3
+	rotr PR0, 16
+	rotr PR1, 16
+	rotr PR2, 16
+	rotr PR3, 16
 #endif
 
-	// AND 0x0fffffff;
-	ext 	PR(0), PR(0), 0, (32-4)
-	// AND 0x0ffffffc;
-	and	PR(1), PR(1), PT(0)
-	and	PR(2), PR(2), PT(0)
-	and	PR(3), PR(3), PT(0)
-	
-	STORE_zero_poly_h(0)
-	STORE_zero_poly_h(1)
-	STORE_zero_poly_h(2)
-	STORE_zero_poly_h(3)
-	STORE_zero_poly_h(4)
-	
-	STORE_poly_r(0)
-	STORE_poly_r(1)
-	STORE_poly_r(2)
-	STORE_poly_r(3)
-	
-	// Jump Back
-	jr	$ra
-	nop
-.end poly1305_init_mips
-.set reorder
+	// store Hx and Carry
+	sw $zero, PTR_POLY1305_CA
+	sw $zero, PTR_POLY1305_H(0)
+	sw $zero, PTR_POLY1305_H(1)
+	sw $zero, PTR_POLY1305_H(2)
+	sw $zero, PTR_POLY1305_H(3)
+	sw $zero, PTR_POLY1305_H(4)
 
+	lui PT0, 0x0FFF
+	ori PT0, 0xFFFC
+
+	// AND 0x0fffffff;
+	ext PR0, PR0, 0, (32-4)
+
+	// AND 0x0ffffffc;
+	and PR1, PT0
+	and PR2, PT0
+	and PR3, PT0
+
+	srl  PS1, PR1, 2
+	srl  PS2, PR2, 2
+	srl  PS3, PR3, 2
+	addu PS1, PR1
+	addu PS2, PR2
+	addu PS3, PR3
+
+	// store Rx
+	sw PR0, PTR_POLY1305_R(0)
+	sw PR1, PTR_POLY1305_R(1)
+	sw PR2, PTR_POLY1305_R(2)
+	sw PR3, PTR_POLY1305_R(3)
+
+	// store Sx
+	sw PS1, PTR_POLY1305_S(1)
+	sw PS2, PTR_POLY1305_S(2)
+
+	.set noreorder
+	// Jump Back
+	jr $ra
+	sw PS3, PTR_POLY1305_S(3)
+	.set reorder
+.end poly1305_init_mips

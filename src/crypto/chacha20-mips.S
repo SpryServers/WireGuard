@@ -1,8 +1,22 @@
 /* SPDX-License-Identifier: GPL-2.0
  *
- * Copyright (C) 2016-2017 René van Dorst <opensource@vdorst.com>. All Rights Reserved.
+ * Copyright (C) 2016-2018 René van Dorst <opensource@vdorst.com>. All Rights Reserved.
  * Copyright (C) 2015-2017 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
  */
+
+.data
+.align 4
+jmp_table: .word .Lchacha20_mips_xor_64b,.Lchacha20_mips_xor_1b,.Lchacha20_mips_xor_2b,.Lchacha20_mips_xor_3b,.Lchacha20_mips_xor_4b,.Lchacha20_mips_xor_5b,.Lchacha20_mips_xor_6b,.Lchacha20_mips_xor_7b,.Lchacha20_mips_xor_8b,.Lchacha20_mips_xor_9b,.Lchacha20_mips_xor_10b,.Lchacha20_mips_xor_11b,.Lchacha20_mips_xor_12b,.Lchacha20_mips_xor_13b,.Lchacha20_mips_xor_14b,.Lchacha20_mips_xor_15b,.Lchacha20_mips_xor_16b,.Lchacha20_mips_xor_17b,.Lchacha20_mips_xor_18b,.Lchacha20_mips_xor_19b,.Lchacha20_mips_xor_20b,.Lchacha20_mips_xor_21b,.Lchacha20_mips_xor_22b,.Lchacha20_mips_xor_23b,.Lchacha20_mips_xor_24b,.Lchacha20_mips_xor_25b,.Lchacha20_mips_xor_26b,.Lchacha20_mips_xor_27b,.Lchacha20_mips_xor_28b,.Lchacha20_mips_xor_29b,.Lchacha20_mips_xor_30b,.Lchacha20_mips_xor_31b,.Lchacha20_mips_xor_32b,.Lchacha20_mips_xor_33b,.Lchacha20_mips_xor_34b,.Lchacha20_mips_xor_35b,.Lchacha20_mips_xor_36b,.Lchacha20_mips_xor_37b,.Lchacha20_mips_xor_38b,.Lchacha20_mips_xor_39b,.Lchacha20_mips_xor_40b,.Lchacha20_mips_xor_41b,.Lchacha20_mips_xor_42b,.Lchacha20_mips_xor_43b,.Lchacha20_mips_xor_44b,.Lchacha20_mips_xor_45b,.Lchacha20_mips_xor_46b,.Lchacha20_mips_xor_47b,.Lchacha20_mips_xor_48b,.Lchacha20_mips_xor_49b,.Lchacha20_mips_xor_50b,.Lchacha20_mips_xor_51b,.Lchacha20_mips_xor_52b,.Lchacha20_mips_xor_53b,.Lchacha20_mips_xor_54b,.Lchacha20_mips_xor_55b,.Lchacha20_mips_xor_56b,.Lchacha20_mips_xor_57b,.Lchacha20_mips_xor_58b,.Lchacha20_mips_xor_59b,.Lchacha20_mips_xor_60b,.Lchacha20_mips_xor_61b,.Lchacha20_mips_xor_62b,.Lchacha20_mips_xor_63b
+
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define SH  swl
+#define SR  8
+#define ROTR(n) rotr n, 24
+#else
+#define SH  sh
+#define SR  16
+#define ROTR(n)
+#endif
 
 #define X0  $v0
 #define X1  $v1
@@ -45,7 +59,7 @@
 	rotl X(Z), S;
 
 #define CHACHA20_BLOCK_SIZE 64
-#define STACK_SIZE	104
+#define STACK_SIZE	8*12
 #define OUT		$a0
 #define IN		$a1
 #define BYTES		$a2
@@ -53,33 +67,42 @@
 #define ROUND_INDEX	T6
 #define COUNTER		T4
 #define COUNTER_0	T5
-#define LAST_BLOCK	T6
 
 #define CONSTANT_1	0x61707865
 #define CONSTANT_2	0x3320646e
 #define CONSTANT_3	0x79622d32
 #define CONSTANT_4	0x6b206574
 
-#define U32_HI_PART(x)	((x & 0xFFFF0000) >> 16)
-#define U32_LO_PART(x)	(x & 0x0000FFFF)
-
-#define TEMP_XOR_OFFSET 40
-
+.text
 .align 4
 .set reorder
 .set noat
 .globl chacha20_mips
 .ent   chacha20_mips
 chacha20_mips:
+	.set noreorder
+	bnez BYTES, .Lchacha20_mips_start
+	lui	T0, %hi(jmp_table)
+	.set reorder
+
+	jr $ra
+	nop
+
+.align 4
+.Lchacha20_mips_start:
 	// this is in the fifth argument
 	lw COUNTER, 16($sp)
 
 	addiu $sp, -(STACK_SIZE)
 
-	.set noreorder
-	beqz BYTES, .Lchacha20_mips_end
-	nop
-	.set reorder
+	ins	T0, BYTES, 2, 6
+	// calculate last full block address.
+	addiu	BYTES, -1
+	ins	BYTES, $zero, 0, 6
+	lw COUNTER_0, 0(COUNTER)
+	addu	BYTES, OUT
+
+	lw T0, %lo(jmp_table)(T0)
 
 	sw $ra,  0($sp)
 	sw $fp,  4($sp)
@@ -92,17 +115,30 @@ chacha20_mips:
 	sw $s6, 32($sp)
 	sw $s7, 36($sp)
 
-	lw COUNTER_0, 0(COUNTER)
+	lui X0, %hi(CONSTANT_1)
+	lui X1, %hi(CONSTANT_2)
+	lui X2, %hi(CONSTANT_3)
+	lui X3, %hi(CONSTANT_4)
+	ori X0, %lo(CONSTANT_1)
+	ori X1, %lo(CONSTANT_2)
+	ori X2, %lo(CONSTANT_3)
+	ori X3, %lo(CONSTANT_4)
+
+	sw X0,  64($sp)
+	sw X1,  68($sp)
+	sw X2,  72($sp)
+	sw X3,  76($sp)
+	.set noreorder
+	b	.Loop_chacha_start
+	sw T0,  80($sp)
+	.set reorder
 
 .Loop_chacha:
-	lui X0, U32_HI_PART(CONSTANT_1)
-	lui X1, U32_HI_PART(CONSTANT_2)
-	lui X2, U32_HI_PART(CONSTANT_3)
-	lui X3, U32_HI_PART(CONSTANT_4)
-	ori X0, U32_LO_PART(CONSTANT_1)
-	ori X1, U32_LO_PART(CONSTANT_2)
-	ori X2, U32_LO_PART(CONSTANT_3)
-	ori X3, U32_LO_PART(CONSTANT_4)
+	lw X0,  64($sp)
+	lw X1,  68($sp)
+	lw X2,  72($sp)
+	lw X3,  76($sp)
+.Loop_chacha_start:
 	lw X4,   0(KEY)
 	lw X5,   4(KEY)
 	lw X6,   8(KEY)
@@ -132,14 +168,10 @@ chacha20_mips:
 	addiu ROUND_INDEX, -1
 	.set reorder
 
-	lui T0, U32_HI_PART(CONSTANT_1)
-	lui T1, U32_HI_PART(CONSTANT_2)
-	lui T2, U32_HI_PART(CONSTANT_3)
-	lui T3, U32_HI_PART(CONSTANT_4)
-	ori T0, U32_LO_PART(CONSTANT_1)
-	ori T1, U32_LO_PART(CONSTANT_2)
-	ori T2, U32_LO_PART(CONSTANT_3)
-	ori T3, U32_LO_PART(CONSTANT_4)
+	lw T0,  64($sp)
+	lw T1,  68($sp)
+	lw T2,  72($sp)
+	lw T3,  76($sp)
 	addu X0, T0
 	addu X1, T1
 	addu X2, T2
@@ -148,10 +180,6 @@ chacha20_mips:
 	lw T1, 4(KEY)
 	lw T2, 8(KEY)
 	lw T3, 12(KEY)
-
-	// Set LAST_BLOCK if bytes left is less then CHACHA20_BLOCK_SIZE
-	sltiu LAST_BLOCK, BYTES, CHACHA20_BLOCK_SIZE
-
 	addu X4, T0
 	addu X5, T1
 	addu X6, T2
@@ -164,15 +192,19 @@ chacha20_mips:
 	addu X9, T1
 	addu X10, T2
 	addu X11, T3
+
+	lw	T0, 80($sp)
+
 	lw T1, 4(COUNTER)
 	lw T2, 8(COUNTER)
 	lw T3, 12(COUNTER)
 	addu X12, COUNTER_0
 	addu X13, T1
 	addu X14, T2
-	addu X15, T3
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	addu X15, T3
+
 	wsbh 	X0
 	wsbh 	X1
 	wsbh 	X2
@@ -204,14 +236,24 @@ chacha20_mips:
 	rotr 	X12, 16
 	rotr 	X13, 16
 	rotr 	X14, 16
+
+	.set noreorder
+	bne	OUT, BYTES, .Lchacha20_mips_xor_full_block
 	rotr 	X15, 16
+	.set reorder
+#else
+	.set noreorder
+	bne	OUT, BYTES, .Lchacha20_mips_xor_full_block
+	addu X15, T3
+	.set reorder
 #endif
 
 	.set noreorder
-	bnez LAST_BLOCK, .Lchacha20_mips_last_bytes
-	nop
+	jr T0
+	lw ROUND_INDEX, 0(IN)
 	.set reorder
 
+.Lchacha20_mips_xor_full_block:
 	lw T0, 0(IN)
 	lw T1, 4(IN)
 	lw T2, 8(IN)
@@ -220,6 +262,10 @@ chacha20_mips:
 	xor X1, T1
 	xor X2, T2
 	xor X3, T3
+	sw X0,   0(OUT)
+	sw X1,   4(OUT)
+	sw X2,   8(OUT)
+	sw X3,  12(OUT)
 
 	lw T0, 16(IN)
 	lw T1, 20(IN)
@@ -229,6 +275,10 @@ chacha20_mips:
 	xor X5, T1
 	xor X6, T2
 	xor X7, T3
+	sw X4,  16(OUT)
+	sw X5,  20(OUT)
+	sw X6,  24(OUT)
+	sw X7,  28(OUT)
 
 	lw T0, 32(IN)
 	lw T1, 36(IN)
@@ -238,6 +288,10 @@ chacha20_mips:
 	xor X9, T1
 	xor X10, T2
 	xor X11, T3
+	sw X8,  32(OUT)
+	sw X9,  36(OUT)
+	sw X10, 40(OUT)
+	sw X11, 44(OUT)
 
 	lw T0, 48(IN)
 	lw T1, 52(IN)
@@ -247,21 +301,6 @@ chacha20_mips:
 	xor X13, T1
 	xor X14, T2
 	xor X15, T3
-
-	addiu BYTES, -(CHACHA20_BLOCK_SIZE)
-
-	sw X0,   0(OUT)
-	sw X1,   4(OUT)
-	sw X2,   8(OUT)
-	sw X3,  12(OUT)
-	sw X4,  16(OUT)
-	sw X5,  20(OUT)
-	sw X6,  24(OUT)
-	sw X7,  28(OUT)
-	sw X8,  32(OUT)
-	sw X9,  36(OUT)
-	sw X10, 40(OUT)
-	sw X11, 44(OUT)
 	sw X12, 48(OUT)
 	sw X13, 52(OUT)
 	sw X14, 56(OUT)
@@ -271,67 +310,893 @@ chacha20_mips:
 	addiu OUT, CHACHA20_BLOCK_SIZE
 
 .set noreorder
-	bnez BYTES, .Loop_chacha
+	b .Loop_chacha
 	addiu COUNTER_0, 1
-
-	b .Lchacha20_mips_done
-	nop
 .set reorder
 
-.Lchacha20_mips_last_bytes:
-	addiu T3, $sp, TEMP_XOR_OFFSET
-	sltiu	LAST_BLOCK, BYTES, 4
-	// Store block on stack so we can easely access them with a pointer.
-	sw X0,   0(T3)
-	sw X1,   4(T3)
-	sw X2,   8(T3)
-	sw X3,  12(T3)
-	sw X4,  16(T3)
-	sw X5,  20(T3)
-	sw X6,  24(T3)
-	sw X7,  28(T3)
-	sw X8,  32(T3)
-	sw X9,  36(T3)
-	sw X10, 40(T3)
-	sw X11, 44(T3)
-	sw X12, 48(T3)
-	sw X13, 52(T3)
-	sw X14, 56(T3)
-	sw X15, 60(T3)
+.align 4
+.Lchacha20_mips_xor_63b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	lw T3,60(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	xor X15,T3
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+	sw X14,56(OUT)
+	srl T5, X15, SR
+	SH X15,60(OUT)
 
-	bnez	LAST_BLOCK, .Loop_xor_byte
-	nop
-
-.Loop_xor_word:
-	addiu	BYTES, -4
-	lw	T0, 0(IN)
-	addiu	IN, 4
-	lw	T1, 0(T3)
-	sltiu	LAST_BLOCK, BYTES, 4
-	addiu	T3, 4
-	xor	T0, T1
-	sw	T0, 0(OUT)
-	addiu	OUT, 4
 	.set noreorder
-	beqz	LAST_BLOCK, .Loop_xor_word
-	nop
+	b .Lchacha20_mips_xor_48b
+	sb T5,62(OUT)
 	.set reorder
 
-	beqz	BYTES, .Lchacha20_mips_done
-	nop
+.align 4
+.Lchacha20_mips_xor_62b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	lw T3,60(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	xor X15,T3
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+	sw X14,56(OUT)
 
-.Loop_xor_byte:
-	addiu	BYTES, -1
-	lbu	T0, 0(IN)
-	addiu	IN, 1
-	lbu	T1, 0(T3)
-	addiu	T3, 1
-	xor	T0, T1
-	sb	T0, 0(OUT)
 	.set noreorder
-	bnez	BYTES, .Loop_xor_byte
-	addiu	OUT, 1
+	b .Lchacha20_mips_xor_48b
+	SH X15,60(OUT)
 	.set reorder
+
+.align 4
+.Lchacha20_mips_xor_61b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	lw T3,60(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	xor X15,T3
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+	sw X14,56(OUT)
+	ROTR(X15)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb X15,60(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_60b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sw X14,56(OUT)
+	.set reorder
+
+
+.Lchacha20_mips_xor_59b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+	srl T5, X14, SR
+	SH X14,56(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb T5,58(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_58b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	SH X14,56(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_57b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	lw T2,56(IN)
+	xor X12,T0
+	xor X13,T1
+	xor X14,T2
+	sw X12,48(OUT)
+	sw X13,52(OUT)
+	ROTR(X14)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb X14,56(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_56b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	xor X12,T0
+	xor X13,T1
+	sw X12,48(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sw X13,52(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_55b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	xor X12,T0
+	xor X13,T1
+	sw X12,48(OUT)
+	srl T5, X13, SR
+	SH X13,52(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb T5,54(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_54b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	xor X12,T0
+	xor X13,T1
+	sw X12,48(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	SH X13,52(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_53b:
+	lw T0,48(IN)
+	lw T1,52(IN)
+	xor X12,T0
+	xor X13,T1
+	sw X12,48(OUT)
+	ROTR(X13)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb X13,52(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_52b:
+	lw T0,48(IN)
+	xor X12,T0
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sw X12,48(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_51b:
+	lw T0,48(IN)
+	xor X12,T0
+	srl T5, X12, SR
+	SH X12,48(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb T5,50(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_50b:
+	lw T0,48(IN)
+	xor X12,T0
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	SH X12,48(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_49b:
+	lw T0,48(IN)
+	xor X12,T0
+	ROTR(X12)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_48b
+	sb X12,48(OUT)
+	.set reorder
+
+
+.Lchacha20_mips_xor_47b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	lw T3,44(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	xor X11,T3
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+	sw X10,40(OUT)
+	srl T5, X11, SR
+	SH X11,44(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb T5,46(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_46b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	lw T3,44(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	xor X11,T3
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+	sw X10,40(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	SH X11,44(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_45b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	lw T3,44(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	xor X11,T3
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+	sw X10,40(OUT)
+	ROTR(X11)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb X11,44(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_44b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sw X10,40(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_43b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+	srl T5, X10, SR
+	SH X10,40(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb T5,42(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_42b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	SH X10,40(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_41b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+	ROTR(X10)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb X10,40(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_40b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	xor X8,T0
+	xor X9,T1
+	sw X8,32(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sw X9,36(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_39b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	xor X8,T0
+	xor X9,T1
+	sw X8,32(OUT)
+	srl T5, X9, SR
+	SH X9,36(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb T5,38(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_38b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	xor X8,T0
+	xor X9,T1
+	sw X8,32(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	SH X9,36(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_37b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	xor X8,T0
+	xor X9,T1
+	sw X8,32(OUT)
+	ROTR(X9)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb X9,36(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_36b:
+	lw T0,32(IN)
+	xor X8,T0
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sw X8,32(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_35b:
+	lw T0,32(IN)
+	xor X8,T0
+	srl T5, X8, SR
+	SH X8,32(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb T5,34(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_34b:
+	lw T0,32(IN)
+	xor X8,T0
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	SH X8,32(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_33b:
+	lw T0,32(IN)
+	xor X8,T0
+	ROTR(X8)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_32b
+	sb X8,32(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_31b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	lw T3,28(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	xor X7,T3
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+	sw X6,24(OUT)
+	srl T5, X7, SR
+	SH X7,28(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb T5,30(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_30b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	lw T3,28(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	xor X7,T3
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+	sw X6,24(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	SH X7,28(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_29b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	lw T3,28(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	xor X7,T3
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+	sw X6,24(OUT)
+	ROTR(X7)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb X7,28(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_28b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sw X6,24(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_27b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+	srl T5, X6, SR
+	SH X6,24(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb T5,26(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_26b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	SH X6,24(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_25b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+	ROTR(X6)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb X6,24(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_24b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	xor X4,T0
+	xor X5,T1
+	sw X4,16(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sw X5,20(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_23b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	xor X4,T0
+	xor X5,T1
+	sw X4,16(OUT)
+	srl T5, X5, SR
+	SH X5,20(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb T5,22(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_22b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	xor X4,T0
+	xor X5,T1
+	sw X4,16(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	SH X5,20(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_21b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	xor X4,T0
+	xor X5,T1
+	sw X4,16(OUT)
+	ROTR(X5)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb X5,20(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_20b:
+	lw T0,16(IN)
+	xor X4,T0
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sw X4,16(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_19b:
+	lw T0,16(IN)
+	xor X4,T0
+	srl T5, X4, SR
+	SH X4,16(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb T5,18(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_18b:
+	lw T0,16(IN)
+	xor X4,T0
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	SH X4,16(OUT)
+	.set reorder
+
+
+.Lchacha20_mips_xor_17b:
+	lw T0,16(IN)
+	xor X4,T0
+	ROTR(X4)
+
+	.set noreorder
+	b .Lchacha20_mips_xor_16b
+	sb X4,16(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_15b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	lw T3,12(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	xor X3,T3
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+	sw X2, 8(OUT)
+	srl T5, X3, SR
+	SH X3,12(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb T5,14(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_14b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	lw T3,12(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	xor X3,T3
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+	sw X2, 8(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	SH X3,12(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_13b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	lw T3,12(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	xor X3,T3
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+	sw X2, 8(OUT)
+	ROTR(X3)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb X3,12(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_12b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sw X2, 8(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_11b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+	srl T5, X2, SR
+	SH X2, 8(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb T5,10(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_10b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	SH X2, 8(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_9b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+	ROTR(X2)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb X2, 8(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_8b:
+	lw T1, 4(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	sw X0, 0(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sw X1, 4(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_7b:
+	lw T1, 4(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	sw X0, 0(OUT)
+	srl T5, X1, SR
+	SH X1, 4(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb T5, 6(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_6b:
+	lw T1, 4(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	sw X0, 0(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	SH X1, 4(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_5b:
+	lw T1, 4(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	sw X0, 0(OUT)
+	ROTR(X1)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb X1, 4(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_4b:
+	xor X0, ROUND_INDEX
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sw X0, 0(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_3b:
+	xor X0,ROUND_INDEX
+	rotr T5, X0, SR
+	SH X0, 0(OUT)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb T5, 2(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_2b:
+	xor X0,ROUND_INDEX
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	SH X0, 0(OUT)
+	.set reorder
+
+.Lchacha20_mips_xor_1b:
+	xor X0,ROUND_INDEX
+	ROTR(X0)
+
+	.set noreorder
+	b .Lchacha20_mips_done
+	sb X0, 0(OUT)
+	.set reorder
+
+.align 4
+.Lchacha20_mips_xor_64b:
+	lw T0, 48(IN)
+	lw T1, 52(IN)
+	lw T2, 56(IN)
+	lw T3, 60(IN)
+	xor X12, T0
+	xor X13, T1
+	xor X14, T2
+	xor X15, T3
+	sw X12, 48(OUT)
+	sw X13, 52(OUT)
+	sw X14, 56(OUT)
+	sw X15, 60(OUT)
+.Lchacha20_mips_xor_48b:
+	lw T0,32(IN)
+	lw T1,36(IN)
+	lw T2,40(IN)
+	lw T3,44(IN)
+	xor X8,T0
+	xor X9,T1
+	xor X10,T2
+	xor X11,T3
+	sw X8,32(OUT)
+	sw X9,36(OUT)
+	sw X10,40(OUT)
+	sw X11,44(OUT)
+.Lchacha20_mips_xor_32b:
+	lw T0,16(IN)
+	lw T1,20(IN)
+	lw T2,24(IN)
+	lw T3,28(IN)
+	xor X4,T0
+	xor X5,T1
+	xor X6,T2
+	xor X7,T3
+	sw X4,16(OUT)
+	sw X5,20(OUT)
+	sw X6,24(OUT)
+	sw X7,28(OUT)
+.Lchacha20_mips_xor_16b:
+	lw T1, 4(IN)
+	lw T2, 8(IN)
+	lw T3,12(IN)
+	xor X0,ROUND_INDEX
+	xor X1,T1
+	xor X2,T2
+	xor X3,T3
+	sw X0, 0(OUT)
+	sw X1, 4(OUT)
+	sw X2, 8(OUT)
+	sw X3,12(OUT)
 
 .Lchacha20_mips_done:
 	lw $ra,  0($sp)
@@ -352,3 +1217,5 @@ chacha20_mips:
 	.set reorder
 	.set at
 .end chacha20_mips
+
+

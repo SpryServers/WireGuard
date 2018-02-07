@@ -5,6 +5,14 @@
 
 #include <linux/linkage.h>
 
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define MSB 0
+#define LSB 3
+#else
+#define MSB 3
+#define LSB 0
+#endif
+
 #define POLY1305_BLOCK_SIZE 16
 .text
 #define H0 $t0
@@ -48,6 +56,7 @@
 // static void         poly1305_blocks_generic(void *ctx, const u8 *inp, size_t len, u32 padbit)
 .set reorder
 .set noat
+.align 4
 .globl poly1305_blocks_mips
 .ent poly1305_blocks_mips
 poly1305_blocks_mips:
@@ -57,17 +66,13 @@ poly1305_blocks_mips:
 
 	.set noreorder
 	// check srclen >= 16 bytes
-	bnez	srclen, .Lpoly1305_blocks_mips_start
-	// calculate end address. endaddress (srclen) = src + (srclen & 0xFFFFFFF0)
-	addu	srclen, src
+	beqz	srclen, .Lpoly1305_blocks_mips_end
+	subu	$sp, POLY1305_STACK_SIZE
 	.set reorder
 
-	jr $ra
-	nop
+	// calculate end address. endaddress (srclen) = src + (srclen & 0xFFFFFFF0)
+	addu	srclen, src
 
-.align 4
-.Lpoly1305_blocks_mips_start:
-	addiu	$sp, -POLY1305_STACK_SIZE
 	lw R0, PTR_POLY1305_R(0)
 	lw R1, PTR_POLY1305_R(1)
 	lw R2, PTR_POLY1305_R(2)
@@ -96,10 +101,14 @@ poly1305_blocks_mips:
 	addiu SC, $zero, 1
 
 .Lpoly1305_loop:
-	lw O0, 0(src)
-	lw O1, 4(src)
-	lw O2, 8(src)
-	lw O3,12(src)
+	lwl O0, 0+MSB(src)
+	lwl O1, 4+MSB(src)
+	lwl O2, 8+MSB(src)
+	lwl O3,12+MSB(src)
+	lwr O0, 0+LSB(src)
+	lwr O1, 4+LSB(src)
+	lwr O2, 8+LSB(src)
+	lwr O3,12+LSB(src)
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	wsbh O0
@@ -289,10 +298,14 @@ poly1305_emit_mips:
 	movn	H2, G2, SC
 	movn	H3, G3, SC
 
-	lw	CA, 0(NONCE)
-	lw	G1, 4(NONCE)
-	lw	G2, 8(NONCE)
-	lw	G3,12(NONCE)
+	lwl	CA, 0+MSB(NONCE)
+	lwl	G1, 4+MSB(NONCE)
+	lwl	G2, 8+MSB(NONCE)
+	lwl	G3,12+MSB(NONCE)
+	lwr	CA, 0+LSB(NONCE)
+	lwr	G1, 4+LSB(NONCE)
+	lwr	G2, 8+LSB(NONCE)
+	lwr	G3,12+LSB(NONCE)
 
 	/* mac = (h + nonce) % (2^128) */
 	addu	H0, CA
@@ -331,13 +344,16 @@ poly1305_emit_mips:
 #endif
 
 	// store MAC
-	sw H0, 0(MAC)
-	sw H1, 4(MAC)
-	sw H2, 8(MAC)
-
+	swl H0, 0+MSB(MAC)
+	swl H1, 4+MSB(MAC)
+	swl H2, 8+MSB(MAC)
+	swl H3,12+MSB(MAC)
+	swr H0, 0+LSB(MAC)
+	swr H1, 4+LSB(MAC)
+	swr H2, 8+LSB(MAC)
 	.set noreorder
 	jr	$ra
-	sw H3,12(MAC)
+	swr H3,12+LSB(MAC)
 	.set reorder
 .end poly1305_emit_mips
 
@@ -355,10 +371,14 @@ poly1305_emit_mips:
 .globl poly1305_init_mips
 .ent poly1305_init_mips
 poly1305_init_mips:
-	lw PR0, 0($a1)
-	lw PR1, 4($a1)
-	lw PR2, 8($a1)
-	lw PR3,12($a1)
+	lwl PR0, 0+MSB($a1)
+	lwl PR1, 4+MSB($a1)
+	lwl PR2, 8+MSB($a1)
+	lwl PR3,12+MSB($a1)
+	lwr PR0, 0+LSB($a1)
+	lwr PR1, 4+LSB($a1)
+	lwr PR2, 8+LSB($a1)
+	lwr PR3,12+LSB($a1)
 
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	wsbh PR0
